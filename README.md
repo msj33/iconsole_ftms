@@ -1,6 +1,6 @@
 # iConsole Bike → MyWhoosh Bridge
 
-This app helps MyWhoosh read data from your spinning bike.
+This app helps MyWhoosh read data from your spinning bike and includes a local web dashboard for control.
 
 ## Important notices
 
@@ -43,12 +43,29 @@ In Terminal:
 
 ```bash
 cd /Users/mortenstensgaard/git/iconsole
-ICONSOLE_BIKE_MAC=8c-de-52-21-9e-15 ./iconsole_ftms
+./iconsole_ftms
 ```
 
-Replace `ICONSOLE_BIKE_MAC` with your own bike MAC address.
+`ICONSOLE_BIKE_MAC` is now optional.
+If omitted, the app auto-discovers from paired Bluetooth devices and prioritizes names like iConsole/Abilica/SB-X.
+When multiple devices are paired, the app lists them in Terminal so you can choose with ArrowUp/ArrowDown and Enter.
+You can still force a specific bike:
+
+```bash
+ICONSOLE_BIKE_MAC=xx-xx-xx-xx-xx-xx ./iconsole_ftms
+```
 
 Keep this Terminal window open while training.
+When the app starts, open:
+
+```text
+http://127.0.0.1:8080
+```
+
+The web dashboard replaces the old terminal control UI.
+
+If the bike is off or unavailable, the app now keeps running, keeps hosting the web UI, and retries RFCOMM connection automatically.
+When bike connection succeeds, Terminal prints both local URL (`127.0.0.1`) and detected home-network URL (for example `192.x.x.x`) for web access.
 
 ### Step 3: Connect in MyWhoosh
 
@@ -151,20 +168,15 @@ cd /Users/mortenstensgaard/git/iconsole
 ICONSOLE_BIKE_MAC=8c-de-52-21-9e-15 ICONSOLE_GRADE_DEADBAND_PERCENT=0.15 ./iconsole_ftms
 ```
 
-## Manual resistance override while riding
+## Web controls while riding
 
-While `iconsole_ftms` is running, you can manually override resistance from Terminal:
+While `iconsole_ftms` is running, use the web dashboard:
 
-- `+` / `=` increase one step
-- `-` / `_` decrease one step
-- `1`..`9` set level directly
-- `s` / `S` speed factor up/down (live)
-- `p` / `P` power factor up/down (live)
-- `g` / `G` grade scale up/down (live)
-- `v` print current calibration values
-- `q` quit cleanly
-
-The bridge shows a live dashboard with bike data (left) and FTMS/app data (right).
+- **ArrowUp / ArrowDown** in browser adjusts **auto-base resistance** (used for grade simulation).
+- **Auto base + / -** buttons do the same.
+- **Resistance + / -** buttons manually adjust current resistance.
+- **Set resistance** sets a specific resistance level (1..30).
+- **Stop app** ends the bridge cleanly.
 
 ## Fair calibration guidance
 
@@ -177,7 +189,8 @@ If you want realistic/fair online behavior:
 ## Notes about resistance levels
 
 - This setup uses resistance level range **1..30**.
-- Bike starts at level **1** on startup.
+- Bike starts at level **5** on startup (default).
+- Auto-base resistance for grade simulation starts at level **3** (default).
 
 ## Optional: target power to resistance sensitivity
 
@@ -205,7 +218,7 @@ Configuration is done with environment variables before `./iconsole_ftms`.
 
 - `ICONSOLE_BIKE_MAC`  
   Bike Bluetooth MAC address used for RFCOMM connection.  
-  Required (no default).
+  Optional. If not set, app auto-discovers a paired bike.
 
 - `ICONSOLE_VERBOSE`  
   `1` enables verbose debug logs.  
@@ -221,11 +234,19 @@ Configuration is done with environment variables before `./iconsole_ftms`.
 
 - `ICONSOLE_GRADE_SCALE_UP`  
   Grade->resistance scale for uphill (`+grade`).  
-  Default: `1.0`
+  Default: `0.60`
 
 - `ICONSOLE_GRADE_SCALE_DOWN`  
   Grade->resistance scale for downhill (`-grade`).  
-  Default: `1.0`
+  Default: `0.60`
+
+- `ICONSOLE_START_RESISTANCE`  
+  Startup resistance level (clamped to `1..30`).  
+  Default: `5`
+
+- `ICONSOLE_AUTO_BASE_RESISTANCE`  
+  Base resistance used when converting FTMS grade to resistance.  
+  Default: `3`
 
 - `ICONSOLE_GRADE_DEADBAND_PERCENT`  
   Ignores tiny grade changes below this threshold.  
@@ -243,6 +264,14 @@ Configuration is done with environment variables before `./iconsole_ftms`.
   Ignore target power for this many seconds after grade command.  
   Default: `8.0`
 
+- `ICONSOLE_WEB_PORT`  
+  Port for local web dashboard.  
+  Default: `8080`
+
+- `ICONSOLE_RECONNECT_SECONDS`  
+  Seconds between reconnect attempts when bike/RFCOMM is unavailable.  
+  Default: `2.0`
+
 ### Example with multiple options
 
 ```bash
@@ -255,19 +284,10 @@ ICONSOLE_GRADE_SCALE_DOWN=2.0 \
 ./iconsole_ftms
 ```
 
-## Live calibration changes (while running)
+## Runtime control (while running)
 
-During runtime you can calibrate values directly from keyboard:
-
-- `s` increase speed factor
-- `S` decrease speed factor
-- `p` increase power factor
-- `P` decrease power factor
-- `g` increase both grade scales (up/down)
-- `G` decrease both grade scales (up/down)
-- `v` show current calibration values in status line
-
-These live changes affect current session only (they are not persisted).
+Use the web UI for runtime control at `http://127.0.0.1:8080`.
+ArrowUp and ArrowDown are mapped to auto-base resistance up/down.
 
 ## Race safety warning for calibration features
 

@@ -19,6 +19,7 @@ final class FTMSPeripheral: NSObject, CBPeripheralManagerDelegate {
     enum ResistanceCommandSource: String {
         case startup = "START"
         case manual = "MAN"
+        case autoBase = "BASE"
         case targetResistance = "RES"
         case simulationGrade = "GRADE"
         case targetPower = "POWER"
@@ -38,8 +39,8 @@ final class FTMSPeripheral: NSObject, CBPeripheralManagerDelegate {
     private let bikeChannel: IOBluetoothRFCOMMChannel
     private let tuning: BridgeTuning
     private var telemetry: BikeTelemetry?
-    private var currentResistance: Int = minResistanceLevel
-    private var simulationBaseResistance: Int = minResistanceLevel
+    private var currentResistance: Int = startupResistanceLevel
+    private var simulationBaseResistance: Int = defaultSimulationBaseResistanceLevel
     private var lastSimulationGradePercent: Double?
     private var latestReceivedGradePercent: Double?
     private var latestReceivedWindSpeedMetersPerSecond: Double?
@@ -456,6 +457,10 @@ final class FTMSPeripheral: NSObject, CBPeripheralManagerDelegate {
         lastEventSummary
     }
 
+    var currentAutoBaseResistanceLevel: Int {
+        simulationBaseResistance
+    }
+
     func increaseManualResistance() {
         let target = min(maxResistanceLevel, currentResistance + 1)
         simulationBaseResistance = target
@@ -475,6 +480,21 @@ final class FTMSPeripheral: NSObject, CBPeripheralManagerDelegate {
         simulationBaseResistance = target
         lastEventSummary = "manual set -> lvl \(target)"
         applyResistanceLevel(target, source: .manual)
+    }
+
+    func increaseAutoBaseResistance() {
+        setAutoBaseResistance(level: simulationBaseResistance + 1)
+    }
+
+    func decreaseAutoBaseResistance() {
+        setAutoBaseResistance(level: simulationBaseResistance - 1)
+    }
+
+    func setAutoBaseResistance(level: Int) {
+        let target = max(minResistanceLevel, min(maxResistanceLevel, level))
+        simulationBaseResistance = target
+        lastEventSummary = "auto base set -> lvl \(target)"
+        applyResistanceLevel(target, source: .autoBase)
     }
 
     private func sendControlPointResponse(requestOpcode: UInt8, resultCode: UInt8) {

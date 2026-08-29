@@ -78,8 +78,7 @@ final class RFCOMMDelegate: NSObject, IOBluetoothRFCOMMChannelDelegate {
         _ channel: IOBluetoothRFCOMMChannel!,
         status error: IOReturn
     ) {
-
-        print("RFCOMM open:", error)
+        // Intentionally quiet.
     }
 
     func rfcommChannelClosed(_ channel: IOBluetoothRFCOMMChannel!) {
@@ -169,8 +168,6 @@ func initialize(_ channel: IOBluetoothRFCOMMChannel) -> Bool {
 
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
     }
-
-    print("Initialization complete")
 
     return true
 }

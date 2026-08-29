@@ -24,189 +24,563 @@ struct IconsoleFTMSApp {
             performTerminalCleanup(clearDashboard: false)
         }
 
-        print()
-        print("==============================================")
-        print(" iCONSOLE+ -> FTMS BRIDGE")
-        print("==============================================")
-        print("Verbose logs:", verboseLogging ? "ON" : "OFF")
-        print("Speed factor:", String(format: "%.5f", tuning.currentSpeedFactor))
-        print("Power factor:", String(format: "%.5f", tuning.currentPowerFactor))
-        print("Resistance levels:", "\(minResistanceLevel)...\(maxResistanceLevel)")
-        print("Grade scale up:", String(format: "%.3f", tuning.currentGradeScaleUp))
-        print("Grade scale down:", String(format: "%.3f", tuning.currentGradeScaleDown))
-        print("Grade deadband (%):", String(format: "%.3f", gradeCommandDeadbandPercent))
-        print("Power watts/level:", String(format: "%.3f", powerWattsPerResistanceLevel))
-        print("Prefer grade over power:", preferGradeOverTargetPower ? "YES" : "NO")
-        print("Target power suppress s:", String(format: "%.2f", targetPowerSuppressWindowSeconds))
+        if bikeMacAddress.isEmpty {
+            print("Bike selection: choose from paired Bluetooth devices")
+        } else {
+            print("Bike selection: \(bikeMacAddressEnvKey)=\(bikeMacAddress)")
+        }
         print()
 
-        guard !bikeMacAddress.isEmpty else {
-            print("❌ Missing environment variable: \(bikeMacAddressEnvKey)")
-            print("Example: ICONSOLE_BIKE_MAC=8c-de-52-21-9e-15 ./iconsole_ftms")
-            exit(1)
+        var activeChannel: IOBluetoothRFCOMMChannel?
+        var activeRFCOMMDelegate: RFCOMMDelegate?
+        var activeFTMS: FTMSPeripheral?
+        var stagedManualResistance = startupResistanceLevel
+        var stagedAutoBaseResistance = defaultSimulationBaseResistanceLevel
+        let webState = SharedWebState(initial: WebDashboardSnapshot(
+            status: "Starting web dashboard...",
+            bikeTime: "-",
+            bikeSpeed: "-",
+            bikeCadence: "-",
+            bikePower: "-",
+            bikeResistance: "-",
+            bikeDistance: "-",
+            bikeCalories: "-",
+            bikeHeartRate: "-",
+            event: "-",
+            source: "-",
+            opcode: "-",
+            commandedResistance: stagedManualResistance,
+            autoBaseResistance: stagedAutoBaseResistance,
+            receivedGrade: "-",
+            appliedGrade: "-",
+            targetPower: "-",
+            targetResistance: "-",
+            tuning: tuning.snapshotString()
+        ))
+        let webCommandQueue = WebCommandQueue()
+        let webServer = WebControlServer(port: webServerPort, state: webState, commandQueue: webCommandQueue)
+
+        do {
+            try webServer.start()
+        } catch {
+            print("❌ Failed to start web server on port \(webServerPort): \(error.localizedDescription)")
+            exit(4)
         }
 
-        guard let device = IOBluetoothDevice(addressString: bikeMacAddress) else {
-            print("❌ Device not found for address: \(bikeMacAddress)")
-            exit(1)
+        defer {
+            webServer.stop()
         }
+        var lastTelemetry: BikeTelemetry?
+        var statusLine = "Waiting for bike connection..."
+        var webStatusLine = "Waiting for bike connection..."
+        var lastSnapshotAt = Date.distantPast
+        var shouldQuit = false
+        var connectAttempt = 0
+        var nextConnectAttemptAt = Date.distantPast
+        var lastSelectedDeviceAddress: String?
+        var lastSelectionFailureMessage: String?
+        var lastConnectionStatusLine: String?
+        var hasPrintedWebAccessInfo = false
+        var selectedBikeAddress: String?
 
-        print("Device:", device.nameOrAddress ?? "unknown")
-        print("Address:", device.addressString ?? "unknown")
-        print()
-
-        print("SDP:", device.performSDPQuery(nil))
-        print()
-
-        let rfcommDelegate = RFCOMMDelegate()
-        var channel: IOBluetoothRFCOMMChannel?
-
-        let result = device.openRFCOMMChannelSync(&channel, withChannelID: channelID, delegate: rfcommDelegate)
-
-        guard let channel else {
-            print("❌ RFCOMM failed:", result)
-            exit(2)
-        }
-
-        print("RFCOMM channel:", channel.getID())
-        print("MTU:", channel.getMTU())
-        print("OPEN:", channel.isOpen())
-        print()
-
-        channel.setDelegate(rfcommDelegate)
-
-        guard initialize(channel) else {
-            print()
-            print("❌ iConsole initialization failed")
-            channel.close()
-            exit(3)
-        }
-
-        print()
-        print("Starting bike...")
-
-        let startResult = send(channel, START)
-        print("START write:", startResult)
-
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
-
-        let currentLevel = minResistanceLevel
-        setResistance(channel, level: currentLevel)
-
-        let ftms = FTMSPeripheral(channel: channel, tuning: tuning)
-
-        withExtendedLifetime(ftms) {
-            let stdinState = enableRawNonBlockingStdin()
-            activeStdinState = stdinState
-            var lastTelemetry: BikeTelemetry?
-            var statusLine = "Waiting for bike telemetry and FTMS commands..."
-            var lastRenderAt = Date.distantPast
-            var needsRender = true
-            beginLiveDashboard()
-            defer {
-                performTerminalCleanup(clearDashboard: true)
+        if bikeMacAddress.isEmpty {
+            let candidates = autoDiscoverBikeCandidates()
+            if let selected = chooseBikeDeviceFromConsole(candidates) {
+                selectedBikeAddress = selected.addressString
+                let selectedName = selected.nameOrAddress ?? "unknown"
+                let selectedAddress = selected.addressString ?? "unknown"
+                print("Selected bike:", selectedName)
+                print("Address:", selectedAddress)
+                print()
+            } else {
+                print("⚠️ Device selection was cancelled. Retrying discovery automatically...")
             }
-            var shouldQuit = false
+        }
 
-            while !shouldQuit {
-                let readResult = send(channel, READ)
+        while !shouldQuit {
+            let now = Date()
 
-                if readResult != kIOReturnSuccess {
-                    statusLine = "READ failed: \(readResult)"
-                    needsRender = true
-                    break
+            if activeChannel == nil, now >= nextConnectAttemptAt {
+                connectAttempt += 1
+                statusLine = "Connecting to bike..."
+                webStatusLine = "Trying to connect to bike..."
+                printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
+
+                let candidateDevices = resolvePreferredBikeCandidates(selectedAddress: selectedBikeAddress)
+                guard !candidateDevices.isEmpty else {
+                    let selectionFailure = bikeMacAddress.isEmpty
+                        ? "No paired Bluetooth devices found. Pair bike in macOS Bluetooth settings."
+                        : "Configured bike address not found: \(bikeMacAddress)"
+                    statusLine = "\(selectionFailure) Retrying..."
+                    webStatusLine = bikeMacAddress.isEmpty
+                        ? "No paired bike found yet. Pair bike in macOS settings. Retrying automatically..."
+                        : "Configured bike address was not found. Retrying automatically..."
+                    if selectionFailure != lastSelectionFailureMessage {
+                        printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
+                        lastSelectionFailureMessage = selectionFailure
+                    }
+                    nextConnectAttemptAt = Date(timeIntervalSinceNow: rfcommReconnectIntervalSeconds)
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: loopIdleSleepSeconds))
+                    continue
+                }
+                lastSelectionFailureMessage = nil
+
+                let selectedIndex = max(0, (connectAttempt - 1) % candidateDevices.count)
+                let device = candidateDevices[selectedIndex]
+                let selectedAddress = device.addressString ?? "unknown"
+                if selectedAddress != lastSelectedDeviceAddress {
+                    print("Selected bike:", device.nameOrAddress ?? "unknown")
+                    print("Address:", selectedAddress)
+                    print()
+                    lastSelectedDeviceAddress = selectedAddress
                 }
 
-                if let packet = waitForBikePacket(
-                    delegate: rfcommDelegate,
+                let delegate = RFCOMMDelegate()
+                var candidateChannel: IOBluetoothRFCOMMChannel?
+                let openResult = device.openRFCOMMChannelSync(
+                    &candidateChannel,
+                    withChannelID: channelID,
+                    delegate: delegate
+                )
+
+                guard let candidateChannel, openResult == kIOReturnSuccess else {
+                    statusLine = "Bike is not connectable right now. Retrying..."
+                    webStatusLine = "Bike is currently unavailable. Retrying automatically..."
+                    printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
+                    nextConnectAttemptAt = Date(timeIntervalSinceNow: rfcommReconnectIntervalSeconds)
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: loopIdleSleepSeconds))
+                    continue
+                }
+
+                candidateChannel.setDelegate(delegate)
+
+                if !initialize(candidateChannel) {
+                    statusLine = "Bike init failed. Retrying..."
+                    webStatusLine = "Could not initialize bike. Retrying automatically..."
+                    printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
+                    candidateChannel.close()
+                    nextConnectAttemptAt = Date(timeIntervalSinceNow: rfcommReconnectIntervalSeconds)
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: loopIdleSleepSeconds))
+                    continue
+                }
+
+                let startResult = send(candidateChannel, START)
+
+                if startResult != kIOReturnSuccess {
+                    statusLine = "Bike start failed. Retrying..."
+                    webStatusLine = "Could not start bike. Retrying automatically..."
+                    printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
+                    candidateChannel.close()
+                    nextConnectAttemptAt = Date(timeIntervalSinceNow: rfcommReconnectIntervalSeconds)
+                    RunLoop.current.run(until: Date(timeIntervalSinceNow: loopIdleSleepSeconds))
+                    continue
+                }
+
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+                setResistance(candidateChannel, level: stagedManualResistance)
+
+                let connectedFTMS = FTMSPeripheral(channel: candidateChannel, tuning: tuning)
+                connectedFTMS.setAutoBaseResistance(level: stagedAutoBaseResistance)
+                activeRFCOMMDelegate = delegate
+                activeChannel = candidateChannel
+                activeFTMS = connectedFTMS
+                statusLine = "Connected. Streaming telemetry and accepting FTMS/web commands."
+                webStatusLine = "Connected to bike."
+                printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
+                if !hasPrintedWebAccessInfo {
+                    printWebAccessInfo(port: webServerPort)
+                    hasPrintedWebAccessInfo = true
+                }
+            }
+
+            if let activeChannel, let activeRFCOMMDelegate, let activeFTMS {
+                let readResult = send(activeChannel, READ)
+
+                if readResult != kIOReturnSuccess {
+                    statusLine = "Connection lost. Reconnecting..."
+                    webStatusLine = "Connection lost. Reconnecting automatically..."
+                    printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
+                    activeChannel.close()
+                    selfDrain()
+                    nextConnectAttemptAt = Date(timeIntervalSinceNow: rfcommReconnectIntervalSeconds)
+                    hasPrintedWebAccessInfo = false
+                } else if let packet = waitForBikePacket(
+                    delegate: activeRFCOMMDelegate,
                     timeout: bikeReadResponseWaitSeconds,
                     pollInterval: bikeReadPollIntervalSeconds
                 ), let decoded = decodeTelemetry(packet) {
                     lastTelemetry = decoded
-                    ftms.sendTelemetry(decoded)
-                    needsRender = true
+                    activeFTMS.sendTelemetry(decoded)
                 }
+            }
 
-                let bytes = readAvailableInputBytes()
-                if !bytes.isEmpty {
-                    for byte in bytes {
-                        switch byte {
-                        case 43, 61: // +, =
-                            ftms.increaseManualResistance()
-                            statusLine = "Manual resistance up"
-                            needsRender = true
-                        case 45, 95: // -, _
-                            ftms.decreaseManualResistance()
-                            statusLine = "Manual resistance down"
-                            needsRender = true
-                        case 49...57:
-                            ftms.setManualResistance(level: Int(byte - 48))
-                            statusLine = "Manual resistance set"
-                            needsRender = true
-                        case 115: // s
-                            tuning.increaseSpeedFactor()
-                            statusLine = "Speed factor increased"
-                            needsRender = true
-                        case 83: // S
-                            tuning.decreaseSpeedFactor()
-                            statusLine = "Speed factor decreased"
-                            needsRender = true
-                        case 112: // p
-                            tuning.increasePowerFactor()
-                            statusLine = "Power factor increased"
-                            needsRender = true
-                        case 80: // P
-                            tuning.decreasePowerFactor()
-                            statusLine = "Power factor decreased"
-                            needsRender = true
-                        case 103: // g
-                            tuning.increaseGradeScale()
-                            statusLine = "Grade scale increased"
-                            needsRender = true
-                        case 71: // G
-                            tuning.decreaseGradeScale()
-                            statusLine = "Grade scale decreased"
-                            needsRender = true
-                        case 118: // v
-                            statusLine = "Tuning: \(tuning.snapshotString())"
-                            needsRender = true
-                        case 113: // q
-                            statusLine = "Stopping..."
-                            shouldQuit = true
-                        default:
-                            break
+            let webCommands = webCommandQueue.drain()
+            if !webCommands.isEmpty {
+                for command in webCommands {
+                    switch command.action {
+                    case "base_up":
+                        stagedAutoBaseResistance = min(maxResistanceLevel, stagedAutoBaseResistance + 1)
+                        if let activeFTMS {
+                            activeFTMS.setAutoBaseResistance(level: stagedAutoBaseResistance)
+                            statusLine = "Auto base resistance set to \(stagedAutoBaseResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Auto base set to \(stagedAutoBaseResistance) (applies on connect)"
+                            webStatusLine = "Auto base set to \(stagedAutoBaseResistance). Applies on next connection."
                         }
+                    case "base_down":
+                        stagedAutoBaseResistance = max(minResistanceLevel, stagedAutoBaseResistance - 1)
+                        if let activeFTMS {
+                            activeFTMS.setAutoBaseResistance(level: stagedAutoBaseResistance)
+                            statusLine = "Auto base resistance set to \(stagedAutoBaseResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Auto base set to \(stagedAutoBaseResistance) (applies on connect)"
+                            webStatusLine = "Auto base set to \(stagedAutoBaseResistance). Applies on next connection."
+                        }
+                    case "manual_up":
+                        stagedManualResistance = min(maxResistanceLevel, stagedManualResistance + 1)
+                        if let activeFTMS {
+                            activeFTMS.setManualResistance(level: stagedManualResistance)
+                            statusLine = "Manual resistance set to \(stagedManualResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Manual resistance set to \(stagedManualResistance) (applies on connect)"
+                            webStatusLine = "Manual resistance set to \(stagedManualResistance). Applies on next connection."
+                        }
+                    case "manual_down":
+                        stagedManualResistance = max(minResistanceLevel, stagedManualResistance - 1)
+                        if let activeFTMS {
+                            activeFTMS.setManualResistance(level: stagedManualResistance)
+                            statusLine = "Manual resistance set to \(stagedManualResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Manual resistance set to \(stagedManualResistance) (applies on connect)"
+                            webStatusLine = "Manual resistance set to \(stagedManualResistance). Applies on next connection."
+                        }
+                    case "manual_set":
+                        if let level = command.level {
+                            let clampedLevel = max(minResistanceLevel, min(maxResistanceLevel, level))
+                            stagedManualResistance = clampedLevel
+                            if let activeFTMS {
+                                activeFTMS.setManualResistance(level: clampedLevel)
+                                statusLine = "Manual resistance set to \(clampedLevel)"
+                                webStatusLine = statusLine
+                            } else {
+                                statusLine = "Manual resistance set to \(clampedLevel) (applies on connect)"
+                                webStatusLine = "Manual resistance set to \(clampedLevel). Applies on next connection."
+                            }
+                        }
+                    case "quit":
+                        statusLine = "Stopping..."
+                        webStatusLine = "Stopping app..."
+                        shouldQuit = true
+                    default:
+                        break
                     }
                 }
-
-                let now = Date()
-                if needsRender || now.timeIntervalSince(lastRenderAt) >= uiRefreshIntervalSeconds {
-                    renderLiveDashboard(
-                        bike: lastTelemetry,
-                        ftms: ftms,
-                        tuning: tuning,
-                        status: statusLine
-                    )
-                    lastRenderAt = now
-                    needsRender = false
-                }
-
-                RunLoop.current.run(until: Date(timeIntervalSinceNow: loopIdleSleepSeconds))
             }
+
+            let snapshotFTMS = activeFTMS
+            let nowForSnapshot = Date()
+            if nowForSnapshot.timeIntervalSince(lastSnapshotAt) >= uiRefreshIntervalSeconds {
+                webState.set(
+                    WebDashboardSnapshot(
+                        status: webStatusLine,
+                        bikeTime: formatBikeTime(lastTelemetry),
+                        bikeSpeed: formatBikeSpeed(lastTelemetry),
+                        bikeCadence: formatBikeCadence(lastTelemetry),
+                        bikePower: formatBikePower(lastTelemetry),
+                        bikeResistance: formatBikeResistance(lastTelemetry),
+                        bikeDistance: formatBikeDistance(lastTelemetry),
+                        bikeCalories: formatBikeCalories(lastTelemetry),
+                        bikeHeartRate: formatBikeHeartRate(lastTelemetry),
+                        event: snapshotFTMS?.latestEvent ?? "disconnected",
+                        source: snapshotFTMS?.latestResistanceSource ?? "-",
+                        opcode: snapshotFTMS?.latestControlPointOpcodeHex ?? "-",
+                        commandedResistance: snapshotFTMS?.currentCommandedResistanceLevel ?? stagedManualResistance,
+                        autoBaseResistance: snapshotFTMS?.currentAutoBaseResistanceLevel ?? stagedAutoBaseResistance,
+                        receivedGrade: formatSignedPercent(snapshotFTMS?.latestReceivedSimulationGradePercent),
+                        appliedGrade: formatSignedPercent(snapshotFTMS?.latestSimulationGradePercent),
+                        targetPower: formatWatts(snapshotFTMS?.latestTargetPowerWatts),
+                        targetResistance: formatPercent(snapshotFTMS?.latestTargetResistancePercent),
+                        tuning: tuning.snapshotString()
+                    )
+                )
+                lastSnapshotAt = nowForSnapshot
+            }
+
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: loopIdleSleepSeconds))
         }
 
-        print()
-        print()
-        print("Stopping bike...")
+        if let activeChannel {
+            let stopResult = send(activeChannel, STOP)
+            if stopResult != kIOReturnSuccess {
+                printConnectionStatus("Stop signal failed.", lastPrinted: &lastConnectionStatusLine)
+            }
 
-        let stopResult = send(channel, STOP)
-        print("STOP:", stopResult)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+            activeChannel.close()
+            printConnectionStatus("Disconnected.", lastPrinted: &lastConnectionStatusLine)
+        }
 
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
-        channel.close()
+        func selfDrain() {
+            activeChannel = nil
+            activeRFCOMMDelegate = nil
+            activeFTMS = nil
+            lastTelemetry = nil
+        }
 
-        print("Disconnected.")
+        func formatBikeTime(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return String(format: "%02d:%02d:%02d", bike.hour, bike.minute, bike.second)
+        }
+
+        func formatBikeSpeed(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return String(format: "%.1f km/h", bike.speed)
+        }
+
+        func formatBikeCadence(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return "\(bike.rpm) RPM"
+        }
+
+        func formatBikePower(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return String(format: "%.1f W", bike.power)
+        }
+
+        func formatBikeResistance(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return "\(bike.resistance)"
+        }
+
+        func formatBikeDistance(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return String(format: "%.1f km", bike.distance)
+        }
+
+        func formatBikeCalories(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return "\(bike.calories) kcal"
+        }
+
+        func formatBikeHeartRate(_ bike: BikeTelemetry?) -> String {
+            guard let bike else { return "-" }
+            return "\(bike.heartRate) bpm"
+        }
+
     }
+}
+
+func resolvePreferredBikeCandidates(selectedAddress: String?) -> [IOBluetoothDevice] {
+    if let selectedAddress, !selectedAddress.isEmpty {
+        guard let selected = IOBluetoothDevice(addressString: selectedAddress) else {
+            return []
+        }
+        return [selected]
+    }
+
+    if !bikeMacAddress.isEmpty {
+        guard let configured = IOBluetoothDevice(addressString: bikeMacAddress) else {
+            return []
+        }
+        return [configured]
+    }
+
+    return autoDiscoverBikeCandidates()
+}
+
+func autoDiscoverBikeCandidates() -> [IOBluetoothDevice] {
+    guard let pairedAny = IOBluetoothDevice.pairedDevices() else {
+        return []
+    }
+
+    let pairedDevices = pairedAny.compactMap { $0 as? IOBluetoothDevice }
+    if pairedDevices.isEmpty {
+        return []
+    }
+
+    let prioritized = pairedDevices
+        .sorted {
+            ($0.nameOrAddress ?? "").localizedCaseInsensitiveCompare($1.nameOrAddress ?? "") == .orderedAscending
+        }
+        .sorted { lhs, rhs in
+            scoreAutoDiscoveryCandidate(lhs) > scoreAutoDiscoveryCandidate(rhs)
+        }
+
+    return prioritized
+}
+
+func chooseBikeDeviceFromConsole(_ devices: [IOBluetoothDevice]) -> IOBluetoothDevice? {
+    guard !devices.isEmpty else {
+        print("⚠️ No paired Bluetooth devices found for selection.")
+        return nil
+    }
+
+    print("Select bike device with ArrowUp/ArrowDown, press Enter to confirm (q to skip):")
+    let stdinState = enableRawNonBlockingStdin()
+    defer {
+        restoreStdin(stdinState)
+        print()
+    }
+
+    var selectedIndex = 0
+    renderDeviceSelection(devices: devices, selectedIndex: selectedIndex)
+
+    while true {
+        let bytes = readAvailableInputBytes(maxBytes: 32)
+        if bytes.isEmpty {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+            continue
+        }
+
+        var index = 0
+        while index < bytes.count {
+            let byte = bytes[index]
+
+            if byte == 27, index + 2 < bytes.count, bytes[index + 1] == 91 {
+                let code = bytes[index + 2]
+                if code == 65 {
+                    selectedIndex = max(0, selectedIndex - 1)
+                    renderDeviceSelection(devices: devices, selectedIndex: selectedIndex)
+                } else if code == 66 {
+                    selectedIndex = min(devices.count - 1, selectedIndex + 1)
+                    renderDeviceSelection(devices: devices, selectedIndex: selectedIndex)
+                }
+                index += 3
+                continue
+            }
+
+            if byte == 13 || byte == 10 {
+                print("\u{001B}[2J\u{001B}[H", terminator: "")
+                return devices[selectedIndex]
+            }
+
+            if byte == 113 || byte == 81 {
+                print("\u{001B}[2J\u{001B}[H", terminator: "")
+                return nil
+            }
+
+            index += 1
+        }
+    }
+}
+
+func renderDeviceSelection(devices: [IOBluetoothDevice], selectedIndex: Int) {
+    print("\u{001B}[2J\u{001B}[H", terminator: "")
+    print("Paired Bluetooth devices:")
+    print("------------------------")
+
+    for (idx, device) in devices.enumerated() {
+        let marker = idx == selectedIndex ? ">" : " "
+        let name = device.nameOrAddress ?? "unknown"
+        let address = device.addressString ?? "-"
+        print("\(marker) \(name) [\(address)]")
+    }
+
+    print()
+    print("Use ArrowUp / ArrowDown then Enter. Press q to skip.")
+}
+
+func printConnectionStatus(_ line: String, lastPrinted: inout String?) {
+    guard line != lastPrinted else {
+        return
+    }
+    print(line)
+    lastPrinted = line
+}
+
+func printWebAccessInfo(port: UInt16) {
+    let localhost = "127.0.0.1:\(port)"
+    let lan = discoverHomeNetworkIPv4()
+
+    print("Web interface:")
+    print("- Local: http://\(localhost)")
+    if let lan {
+        print("- Home network: http://\(lan):\(port)")
+    } else {
+        print("- Home network: not detected")
+    }
+    print()
+}
+
+func discoverHomeNetworkIPv4() -> String? {
+    var addresses: [String] = []
+    var pointer: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&pointer) == 0, let first = pointer else {
+        return nil
+    }
+    defer { freeifaddrs(first) }
+
+    var current: UnsafeMutablePointer<ifaddrs>? = first
+    while let ifa = current?.pointee {
+        defer { current = ifa.ifa_next }
+        guard let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else {
+            continue
+        }
+
+        let flags = Int32(ifa.ifa_flags)
+        let isUp = (flags & IFF_UP) != 0
+        let isLoopback = (flags & IFF_LOOPBACK) != 0
+        guard isUp, !isLoopback else {
+            continue
+        }
+
+        var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let nameInfo = getnameinfo(
+            addr,
+            socklen_t(addr.pointee.sa_len),
+            &hostBuffer,
+            socklen_t(hostBuffer.count),
+            nil,
+            0,
+            NI_NUMERICHOST
+        )
+        guard nameInfo == 0 else {
+            continue
+        }
+
+        let ip = String(cString: hostBuffer)
+        addresses.append(ip)
+    }
+
+    if let private192 = addresses.first(where: { $0.hasPrefix("192.") }) {
+        return private192
+    }
+    if let private10 = addresses.first(where: { $0.hasPrefix("10.") }) {
+        return private10
+    }
+    if let private172 = addresses.first(where: { ip in
+        let parts = ip.split(separator: ".")
+        guard parts.count == 4, let second = Int(parts[1]) else {
+            return false
+        }
+        return ip.hasPrefix("172.") && (16...31).contains(second)
+    }) {
+        return private172
+    }
+
+    return nil
+}
+
+func scoreAutoDiscoveryCandidate(_ device: IOBluetoothDevice) -> Int {
+    let searchText = [
+        device.name ?? "",
+        device.nameOrAddress ?? "",
+        device.addressString ?? ""
+    ]
+    .joined(separator: " ")
+    .lowercased()
+
+    var score = 0
+    if searchText.contains("iconsole") { score += 100 }
+    if searchText.contains("abilica") { score += 90 }
+    if searchText.contains("sb-x") { score += 80 }
+    if searchText.contains("stream") { score += 70 }
+    if searchText.contains("bike") { score += 20 }
+    return score
 }
 
 struct StdinState {

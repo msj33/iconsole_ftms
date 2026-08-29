@@ -64,6 +64,28 @@ let READ: [UInt8] = [
 let verboseLogging = ProcessInfo.processInfo.environment["ICONSOLE_VERBOSE"] == "1"
 let minResistanceLevel = 1
 let maxResistanceLevel = 30
+let startupResistanceLevel = {
+    guard let raw = ProcessInfo.processInfo.environment["ICONSOLE_START_RESISTANCE"] else {
+        return 5
+    }
+
+    guard let value = Int(raw) else {
+        return 5
+    }
+
+    return max(minResistanceLevel, min(maxResistanceLevel, value))
+}()
+let defaultSimulationBaseResistanceLevel = {
+    guard let raw = ProcessInfo.processInfo.environment["ICONSOLE_AUTO_BASE_RESISTANCE"] else {
+        return 3
+    }
+
+    guard let value = Int(raw) else {
+        return 3
+    }
+
+    return max(minResistanceLevel, min(maxResistanceLevel, value))
+}()
 let speedFactor = {
     guard let raw = ProcessInfo.processInfo.environment["ICONSOLE_SPEED_FACTOR"] else {
         return 1.0
@@ -88,7 +110,7 @@ let powerFactor = {
 }()
 let gradeResistanceScaleUp = {
     guard let raw = ProcessInfo.processInfo.environment["ICONSOLE_GRADE_SCALE_UP"] else {
-        return 1.0
+        return 0.60
     }
 
     guard let value = Double(raw), value > 0 else {
@@ -99,7 +121,7 @@ let gradeResistanceScaleUp = {
 }()
 let gradeResistanceScaleDown = {
     guard let raw = ProcessInfo.processInfo.environment["ICONSOLE_GRADE_SCALE_DOWN"] else {
-        return 1.0
+        return 0.60
     }
 
     guard let value = Double(raw), value > 0 else {
@@ -154,6 +176,28 @@ let bikeReadPollIntervalSeconds = 0.004
 let loopIdleSleepSeconds = 0.001
 let ftmsNotifyIntervalSeconds = 0.12
 let uiRefreshIntervalSeconds = 0.20
+let rfcommReconnectIntervalSeconds = {
+    guard let raw = ProcessInfo.processInfo.environment["ICONSOLE_RECONNECT_SECONDS"] else {
+        return 2.0
+    }
+
+    guard let value = Double(raw), value >= 0.2 else {
+        return 2.0
+    }
+
+    return value
+}()
+let webServerPort = {
+    guard let raw = ProcessInfo.processInfo.environment["ICONSOLE_WEB_PORT"] else {
+        return UInt16(8080)
+    }
+
+    guard let value = UInt16(raw), value > 0 else {
+        return UInt16(8080)
+    }
+
+    return value
+}()
 
 func debugLog(_ message: @autoclosure () -> String) {
     guard verboseLogging else { return }
