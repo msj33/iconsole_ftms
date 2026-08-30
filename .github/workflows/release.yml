@@ -38,11 +38,17 @@ jobs:
       - name: Package release dmg
         run: |
           DMG_NAME="iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg"
+          DMG_ROOT="dist/dmg-root"
+          rm -rf "$DMG_ROOT"
+          mkdir -p "$DMG_ROOT"
+          cp -R "dist/iConsole FTMS.app" "$DMG_ROOT/"
+          ln -s /Applications "$DMG_ROOT/Applications"
           hdiutil create \
             -volname "iConsole FTMS" \
-            -srcfolder "dist/iConsole FTMS.app" \
+            -srcfolder "$DMG_ROOT" \
             -ov -format UDZO \
             "dist/$DMG_NAME"
+          rm -rf "$DMG_ROOT"
           echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
 
       - name: Build release notes
@@ -50,19 +56,22 @@ jobs:
           cat > dist/RELEASE_NOTES.md <<EOF
           ## iConsole FTMS v${{ steps.vars.outputs.tag_version }}
 
-          ### Download
-          - **iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg**
+          ### Features
+          - Native macOS app (`iConsole FTMS.app`) with Dock/taskbar integration.
+          - Bluetooth bridge from iConsole bike data to FTMS/Cycling Power for MyWhoosh.
+          - Full-screen responsive web dashboard embedded in the app.
+          - Connect-first device picker with one-tap bike selection.
+          - Simple/Advanced riding modes.
+          - Manual resistance `+/-` control and auto-base resistance control.
+          - Automatic reconnect when bike connection is lost.
+          - Home-network access tip with detected local IP.
+          - Built-in custom app icon and app version display in UI.
 
-          ### Installation
-          1. Download the DMG asset.
-          2. Open the DMG.
-          3. Drag **iConsole FTMS.app** to **Applications**.
-          4. Start the app from Applications.
-
-          ### Notes
-          - Native macOS app bundle with built-in web interface.
-          - App version is visible in the UI header.
-          - This release is published as a draft for manual review.
+          ### Install
+          - Download **iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg**
+          - Open the DMG
+          - Drag **iConsole FTMS.app** to **Applications**
+          - Start the app from **Applications**
           EOF
 
       - name: Remove legacy zip asset (if present)
