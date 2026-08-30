@@ -11,6 +11,12 @@ Native macOS app that bridges selected iConsole bikes to MyWhoosh via FTMS.
 4. Drag **iConsole FTMS.app** to **Applications**
 5. Start **iConsole FTMS** from Applications
 
+If macOS blocks first launch:
+
+1. Open the DMG again
+2. Run **Install iConsole FTMS.command** (included in DMG)
+3. Start **iConsole FTMS** from Applications
+
 ## Web frontend
 
 ### Connection screen
@@ -58,4 +64,3 @@ export ICONSOLE_VERBOSE=1
 - Tag format: `v<version>` (example: `v1.0`).
 - GitHub Actions builds and publishes a release DMG from tags:
   - [release.yml](/Users/mortenstensgaard/git/iconsole/.github/workflows/release.yml)
-- Release workflow uses Apple Developer ID signing + notarization (required for macOS Gatekeeper).
