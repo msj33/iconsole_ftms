@@ -36,8 +36,14 @@ struct IconsoleFTMSApp {
         var activeFTMS: FTMSPeripheral?
         var stagedManualResistance = startupResistanceLevel
         var stagedAutoBaseResistance = defaultSimulationBaseResistanceLevel
+        let localWebURL = "http://127.0.0.1:\(webServerPort)"
+        let lanWebURL = discoverHomeNetworkIPv4().map { "http://\($0):\(webServerPort)" }
         let webState = SharedWebState(initial: WebDashboardSnapshot(
+            appVersion: appVersion,
             status: "Starting web dashboard...",
+            isConnected: false,
+            localWebURL: localWebURL,
+            lanWebURL: lanWebURL,
             bikeTime: "-",
             bikeSpeed: "-",
             bikeCadence: "-",
@@ -55,7 +61,9 @@ struct IconsoleFTMSApp {
             appliedGrade: "-",
             targetPower: "-",
             targetResistance: "-",
-            tuning: tuning.snapshotString()
+            tuning: tuning.snapshotString(),
+            selectedDeviceAddress: bikeMacAddress.isEmpty ? nil : bikeMacAddress,
+            deviceOptions: []
         ))
         let webCommandQueue = WebCommandQueue()
         let webServer = WebControlServer(port: webServerPort, state: webState, commandQueue: webCommandQueue)
@@ -81,39 +89,110 @@ struct IconsoleFTMSApp {
         var lastSelectionFailureMessage: String?
         var lastConnectionStatusLine: String?
         var hasPrintedWebAccessInfo = false
-        var selectedBikeAddress: String?
 
-        if bikeMacAddress.isEmpty {
-            let candidates = autoDiscoverBikeCandidates()
-            if let selected = chooseBikeDeviceFromConsole(candidates) {
-                selectedBikeAddress = selected.addressString
-                let selectedName = selected.nameOrAddress ?? "unknown"
-                let selectedAddress = selected.addressString ?? "unknown"
-                print("Selected bike:", selectedName)
-                print("Address:", selectedAddress)
-                print()
-            } else {
-                print("⚠️ Device selection was cancelled. Retrying discovery automatically...")
-            }
-        }
+        var selectedBikeAddress: String? = bikeMacAddress.isEmpty ? nil : bikeMacAddress
 
         while !shouldQuit {
             let now = Date()
 
+            let webCommands = webCommandQueue.drain()
+            if !webCommands.isEmpty {
+                for command in webCommands {
+                    switch command.action {
+                    case "select_device":
+                        guard let address = command.address, !address.isEmpty else {
+                            break
+                        }
+                        if selectedBikeAddress == address, activeChannel != nil {
+                            webStatusLine = "Already connected to selected bike."
+                            statusLine = webStatusLine
+                            break
+                        }
+                        if selectedBikeAddress == address, activeChannel == nil, now < nextConnectAttemptAt {
+                            webStatusLine = "Already trying to connect to selected bike..."
+                            statusLine = webStatusLine
+                            break
+                        }
+                        selectedBikeAddress = address
+                        webStatusLine = "Bike selected. Connecting..."
+                        statusLine = "Bike selected (\(address)). Connecting..."
+                        if let activeChannel {
+                            activeChannel.close()
+                            selfDrain()
+                        }
+                        nextConnectAttemptAt = Date.distantPast
+                        hasPrintedWebAccessInfo = false
+                    case "base_up":
+                        stagedAutoBaseResistance = min(maxResistanceLevel, stagedAutoBaseResistance + 1)
+                        if let activeFTMS {
+                            activeFTMS.setAutoBaseResistance(level: stagedAutoBaseResistance)
+                            statusLine = "Auto base resistance set to \(stagedAutoBaseResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Auto base set to \(stagedAutoBaseResistance) (applies on connect)"
+                            webStatusLine = "Auto base set to \(stagedAutoBaseResistance). Applies on next connection."
+                        }
+                    case "base_down":
+                        stagedAutoBaseResistance = max(minResistanceLevel, stagedAutoBaseResistance - 1)
+                        if let activeFTMS {
+                            activeFTMS.setAutoBaseResistance(level: stagedAutoBaseResistance)
+                            statusLine = "Auto base resistance set to \(stagedAutoBaseResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Auto base set to \(stagedAutoBaseResistance) (applies on connect)"
+                            webStatusLine = "Auto base set to \(stagedAutoBaseResistance). Applies on next connection."
+                        }
+                    case "manual_up":
+                        stagedManualResistance = min(maxResistanceLevel, stagedManualResistance + 1)
+                        if let activeFTMS {
+                            activeFTMS.setManualResistance(level: stagedManualResistance)
+                            statusLine = "Manual resistance set to \(stagedManualResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Manual resistance set to \(stagedManualResistance) (applies on connect)"
+                            webStatusLine = "Manual resistance set to \(stagedManualResistance). Applies on next connection."
+                        }
+                    case "manual_down":
+                        stagedManualResistance = max(minResistanceLevel, stagedManualResistance - 1)
+                        if let activeFTMS {
+                            activeFTMS.setManualResistance(level: stagedManualResistance)
+                            statusLine = "Manual resistance set to \(stagedManualResistance)"
+                            webStatusLine = statusLine
+                        } else {
+                            statusLine = "Manual resistance set to \(stagedManualResistance) (applies on connect)"
+                            webStatusLine = "Manual resistance set to \(stagedManualResistance). Applies on next connection."
+                        }
+                    case "quit":
+                        statusLine = "Stopping..."
+                        webStatusLine = "Stopping app..."
+                        shouldQuit = true
+                    default:
+                        break
+                    }
+                }
+            }
+
+            if shouldQuit {
+                break
+            }
+
             if activeChannel == nil, now >= nextConnectAttemptAt {
                 connectAttempt += 1
-                statusLine = "Connecting to bike..."
-                webStatusLine = "Trying to connect to bike..."
+                statusLine = "Connecting to bike (attempt \(connectAttempt))..."
+                webStatusLine = "Trying to connect to bike (attempt \(connectAttempt))..."
                 printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
 
-                let candidateDevices = resolvePreferredBikeCandidates(selectedAddress: selectedBikeAddress)
+                let candidateDevices = resolvePreferredBikeCandidates(
+                    selectedAddress: selectedBikeAddress,
+                    allowBroadAutoDiscovery: false
+                )
                 guard !candidateDevices.isEmpty else {
                     let selectionFailure = bikeMacAddress.isEmpty
-                        ? "No paired Bluetooth devices found. Pair bike in macOS Bluetooth settings."
+                        ? "No bike selected. Pick a device in the web interface."
                         : "Configured bike address not found: \(bikeMacAddress)"
                     statusLine = "\(selectionFailure) Retrying..."
                     webStatusLine = bikeMacAddress.isEmpty
-                        ? "No paired bike found yet. Pair bike in macOS settings. Retrying automatically..."
+                        ? "No bike selected. Choose a device from the web interface."
                         : "Configured bike address was not found. Retrying automatically..."
                     if selectionFailure != lastSelectionFailureMessage {
                         printConnectionStatus(statusLine, lastPrinted: &lastConnectionStatusLine)
@@ -128,6 +207,7 @@ struct IconsoleFTMSApp {
                 let selectedIndex = max(0, (connectAttempt - 1) % candidateDevices.count)
                 let device = candidateDevices[selectedIndex]
                 let selectedAddress = device.addressString ?? "unknown"
+                selectedBikeAddress = device.addressString
                 if selectedAddress != lastSelectedDeviceAddress {
                     print("Selected bike:", device.nameOrAddress ?? "unknown")
                     print("Address:", selectedAddress)
@@ -214,79 +294,20 @@ struct IconsoleFTMSApp {
                 }
             }
 
-            let webCommands = webCommandQueue.drain()
-            if !webCommands.isEmpty {
-                for command in webCommands {
-                    switch command.action {
-                    case "base_up":
-                        stagedAutoBaseResistance = min(maxResistanceLevel, stagedAutoBaseResistance + 1)
-                        if let activeFTMS {
-                            activeFTMS.setAutoBaseResistance(level: stagedAutoBaseResistance)
-                            statusLine = "Auto base resistance set to \(stagedAutoBaseResistance)"
-                            webStatusLine = statusLine
-                        } else {
-                            statusLine = "Auto base set to \(stagedAutoBaseResistance) (applies on connect)"
-                            webStatusLine = "Auto base set to \(stagedAutoBaseResistance). Applies on next connection."
-                        }
-                    case "base_down":
-                        stagedAutoBaseResistance = max(minResistanceLevel, stagedAutoBaseResistance - 1)
-                        if let activeFTMS {
-                            activeFTMS.setAutoBaseResistance(level: stagedAutoBaseResistance)
-                            statusLine = "Auto base resistance set to \(stagedAutoBaseResistance)"
-                            webStatusLine = statusLine
-                        } else {
-                            statusLine = "Auto base set to \(stagedAutoBaseResistance) (applies on connect)"
-                            webStatusLine = "Auto base set to \(stagedAutoBaseResistance). Applies on next connection."
-                        }
-                    case "manual_up":
-                        stagedManualResistance = min(maxResistanceLevel, stagedManualResistance + 1)
-                        if let activeFTMS {
-                            activeFTMS.setManualResistance(level: stagedManualResistance)
-                            statusLine = "Manual resistance set to \(stagedManualResistance)"
-                            webStatusLine = statusLine
-                        } else {
-                            statusLine = "Manual resistance set to \(stagedManualResistance) (applies on connect)"
-                            webStatusLine = "Manual resistance set to \(stagedManualResistance). Applies on next connection."
-                        }
-                    case "manual_down":
-                        stagedManualResistance = max(minResistanceLevel, stagedManualResistance - 1)
-                        if let activeFTMS {
-                            activeFTMS.setManualResistance(level: stagedManualResistance)
-                            statusLine = "Manual resistance set to \(stagedManualResistance)"
-                            webStatusLine = statusLine
-                        } else {
-                            statusLine = "Manual resistance set to \(stagedManualResistance) (applies on connect)"
-                            webStatusLine = "Manual resistance set to \(stagedManualResistance). Applies on next connection."
-                        }
-                    case "manual_set":
-                        if let level = command.level {
-                            let clampedLevel = max(minResistanceLevel, min(maxResistanceLevel, level))
-                            stagedManualResistance = clampedLevel
-                            if let activeFTMS {
-                                activeFTMS.setManualResistance(level: clampedLevel)
-                                statusLine = "Manual resistance set to \(clampedLevel)"
-                                webStatusLine = statusLine
-                            } else {
-                                statusLine = "Manual resistance set to \(clampedLevel) (applies on connect)"
-                                webStatusLine = "Manual resistance set to \(clampedLevel). Applies on next connection."
-                            }
-                        }
-                    case "quit":
-                        statusLine = "Stopping..."
-                        webStatusLine = "Stopping app..."
-                        shouldQuit = true
-                    default:
-                        break
-                    }
-                }
-            }
-
             let snapshotFTMS = activeFTMS
+            let pairedOptions = webDeviceOptionsFromPairedDevices(
+                selectedAddress: selectedBikeAddress,
+                configuredAddress: bikeMacAddress
+            )
             let nowForSnapshot = Date()
             if nowForSnapshot.timeIntervalSince(lastSnapshotAt) >= uiRefreshIntervalSeconds {
                 webState.set(
                     WebDashboardSnapshot(
+                        appVersion: appVersion,
                         status: webStatusLine,
+                        isConnected: activeChannel != nil,
+                        localWebURL: localWebURL,
+                        lanWebURL: lanWebURL,
                         bikeTime: formatBikeTime(lastTelemetry),
                         bikeSpeed: formatBikeSpeed(lastTelemetry),
                         bikeCadence: formatBikeCadence(lastTelemetry),
@@ -304,7 +325,9 @@ struct IconsoleFTMSApp {
                         appliedGrade: formatSignedPercent(snapshotFTMS?.latestSimulationGradePercent),
                         targetPower: formatWatts(snapshotFTMS?.latestTargetPowerWatts),
                         targetResistance: formatPercent(snapshotFTMS?.latestTargetResistancePercent),
-                        tuning: tuning.snapshotString()
+                        tuning: tuning.snapshotString(),
+                        selectedDeviceAddress: selectedBikeAddress,
+                        deviceOptions: pairedOptions
                     )
                 )
                 lastSnapshotAt = nowForSnapshot
@@ -374,7 +397,7 @@ struct IconsoleFTMSApp {
     }
 }
 
-func resolvePreferredBikeCandidates(selectedAddress: String?) -> [IOBluetoothDevice] {
+func resolvePreferredBikeCandidates(selectedAddress: String?, allowBroadAutoDiscovery: Bool) -> [IOBluetoothDevice] {
     if let selectedAddress, !selectedAddress.isEmpty {
         guard let selected = IOBluetoothDevice(addressString: selectedAddress) else {
             return []
@@ -389,10 +412,19 @@ func resolvePreferredBikeCandidates(selectedAddress: String?) -> [IOBluetoothDev
         return [configured]
     }
 
-    return autoDiscoverBikeCandidates()
+    let candidates = autoDiscoverBikeCandidates(includeUnmatchedDevices: allowBroadAutoDiscovery)
+    if allowBroadAutoDiscovery {
+        return candidates
+    }
+
+    if candidates.count == 1 {
+        return candidates
+    }
+
+    return []
 }
 
-func autoDiscoverBikeCandidates() -> [IOBluetoothDevice] {
+func autoDiscoverBikeCandidates(includeUnmatchedDevices: Bool) -> [IOBluetoothDevice] {
     guard let pairedAny = IOBluetoothDevice.pairedDevices() else {
         return []
     }
@@ -410,78 +442,61 @@ func autoDiscoverBikeCandidates() -> [IOBluetoothDevice] {
             scoreAutoDiscoveryCandidate(lhs) > scoreAutoDiscoveryCandidate(rhs)
         }
 
-    return prioritized
+    if includeUnmatchedDevices {
+        return prioritized
+    }
+
+    return prioritized.filter { scoreAutoDiscoveryCandidate($0) > 0 }
 }
 
-func chooseBikeDeviceFromConsole(_ devices: [IOBluetoothDevice]) -> IOBluetoothDevice? {
-    guard !devices.isEmpty else {
-        print("⚠️ No paired Bluetooth devices found for selection.")
-        return nil
-    }
-
-    print("Select bike device with ArrowUp/ArrowDown, press Enter to confirm (q to skip):")
-    let stdinState = enableRawNonBlockingStdin()
-    defer {
-        restoreStdin(stdinState)
-        print()
-    }
-
-    var selectedIndex = 0
-    renderDeviceSelection(devices: devices, selectedIndex: selectedIndex)
-
-    while true {
-        let bytes = readAvailableInputBytes(maxBytes: 32)
-        if bytes.isEmpty {
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
-            continue
+func webDeviceOptionsFromPairedDevices(selectedAddress: String?, configuredAddress: String) -> [WebDeviceOption] {
+    let devices = autoDiscoverBikeCandidates(includeUnmatchedDevices: true)
+        .sorted { lhs, rhs in
+            let leftScore = webDevicePriorityScore(
+                lhs,
+                selectedAddress: selectedAddress,
+                configuredAddress: configuredAddress
+            )
+            let rightScore = webDevicePriorityScore(
+                rhs,
+                selectedAddress: selectedAddress,
+                configuredAddress: configuredAddress
+            )
+            if leftScore != rightScore {
+                return leftScore > rightScore
+            }
+            return (lhs.nameOrAddress ?? "").localizedCaseInsensitiveCompare(rhs.nameOrAddress ?? "") == .orderedAscending
         }
 
-        var index = 0
-        while index < bytes.count {
-            let byte = bytes[index]
-
-            if byte == 27, index + 2 < bytes.count, bytes[index + 1] == 91 {
-                let code = bytes[index + 2]
-                if code == 65 {
-                    selectedIndex = max(0, selectedIndex - 1)
-                    renderDeviceSelection(devices: devices, selectedIndex: selectedIndex)
-                } else if code == 66 {
-                    selectedIndex = min(devices.count - 1, selectedIndex + 1)
-                    renderDeviceSelection(devices: devices, selectedIndex: selectedIndex)
-                }
-                index += 3
-                continue
-            }
-
-            if byte == 13 || byte == 10 {
-                print("\u{001B}[2J\u{001B}[H", terminator: "")
-                return devices[selectedIndex]
-            }
-
-            if byte == 113 || byte == 81 {
-                print("\u{001B}[2J\u{001B}[H", terminator: "")
-                return nil
-            }
-
-            index += 1
+    return devices.compactMap { device in
+        guard let address = device.addressString, !address.isEmpty else {
+            return nil
         }
+
+        return WebDeviceOption(
+            name: device.nameOrAddress ?? "unknown",
+            address: address
+        )
     }
 }
 
-func renderDeviceSelection(devices: [IOBluetoothDevice], selectedIndex: Int) {
-    print("\u{001B}[2J\u{001B}[H", terminator: "")
-    print("Paired Bluetooth devices:")
-    print("------------------------")
+func webDevicePriorityScore(
+    _ device: IOBluetoothDevice,
+    selectedAddress: String?,
+    configuredAddress: String
+) -> Int {
+    let address = device.addressString ?? ""
+    var score = scoreAutoDiscoveryCandidate(device) * 100
 
-    for (idx, device) in devices.enumerated() {
-        let marker = idx == selectedIndex ? ">" : " "
-        let name = device.nameOrAddress ?? "unknown"
-        let address = device.addressString ?? "-"
-        print("\(marker) \(name) [\(address)]")
+    if let selectedAddress, !selectedAddress.isEmpty, address.caseInsensitiveCompare(selectedAddress) == .orderedSame {
+        score += 10_000
     }
 
-    print()
-    print("Use ArrowUp / ArrowDown then Enter. Press q to skip.")
+    if !configuredAddress.isEmpty, address.caseInsensitiveCompare(configuredAddress) == .orderedSame {
+        score += 9_000
+    }
+
+    return score
 }
 
 func printConnectionStatus(_ line: String, lastPrinted: inout String?) {

@@ -37,7 +37,39 @@ cd /Users/mortenstensgaard/git/iconsole
 swiftc *.swift -o iconsole_ftms
 ```
 
-### Step 2: Start the bridge
+### Step 2 (recommended): Build a double-clickable `.app`
+
+```bash
+cd /Users/mortenstensgaard/git/iconsole
+./build_macos_app.sh
+```
+
+This reads version from [VERSION](/Users/mortenstensgaard/git/iconsole/VERSION).  
+Optional manual override:
+
+```bash
+./build_macos_app.sh 1.2.3
+```
+
+Then open:
+
+`dist/iConsole FTMS.app`
+
+This starts the bridge in the background and opens a native macOS app window (Dock app) with the web UI embedded.
+On first launch, macOS may ask for Bluetooth permission: choose **Allow**.
+
+Optional app config file:
+
+`~/Library/Application Support/iConsoleFTMS/env.sh`
+
+Example:
+
+```bash
+export ICONSOLE_BIKE_MAC=xx-xx-xx-xx-xx-xx
+export ICONSOLE_WEB_PORT=8080
+```
+
+### Step 3: Start from Terminal (alternative)
 
 In Terminal:
 
@@ -48,7 +80,7 @@ cd /Users/mortenstensgaard/git/iconsole
 
 `ICONSOLE_BIKE_MAC` is now optional.
 If omitted, the app auto-discovers from paired Bluetooth devices and prioritizes names like iConsole/Abilica/SB-X.
-When multiple devices are paired, the app lists them in Terminal so you can choose with ArrowUp/ArrowDown and Enter.
+When disconnected, the app first shows a connect screen where you tap the bike device.
 You can still force a specific bike:
 
 ```bash
@@ -67,7 +99,7 @@ The web dashboard replaces the old terminal control UI.
 If the bike is off or unavailable, the app now keeps running, keeps hosting the web UI, and retries RFCOMM connection automatically.
 When bike connection succeeds, Terminal prints both local URL (`127.0.0.1`) and detected home-network URL (for example `192.x.x.x`) for web access.
 
-### Step 3: Connect in MyWhoosh
+### Step 4: Connect in MyWhoosh
 
 1. Open MyWhoosh
 2. Search for Bluetooth devices
@@ -175,8 +207,19 @@ While `iconsole_ftms` is running, use the web dashboard:
 - **ArrowUp / ArrowDown** in browser adjusts **auto-base resistance** (used for grade simulation).
 - **Auto base + / -** buttons do the same.
 - **Resistance + / -** buttons manually adjust current resistance.
-- **Set resistance** sets a specific resistance level (1..30).
-- **Stop app** ends the bridge cleanly.
+- **Mode toggle (Simple/Advanced)** switches between a minimal fullscreen 2x2 view and detailed stats.
+- **App version** is shown in the web UI title area (for example `v1.0`).
+
+## Versioning and GitHub releases
+
+- App version is stored in [VERSION](/Users/mortenstensgaard/git/iconsole/VERSION).
+- GitHub Actions CI builds the app on pushes/PRs: [ci-build.yml](/Users/mortenstensgaard/git/iconsole/.github/workflows/ci-build.yml).
+- Tagged releases (`v*`) build + zip + publish a **draft** GitHub Release: [release.yml](/Users/mortenstensgaard/git/iconsole/.github/workflows/release.yml).
+- Release flow:
+  1. Update [VERSION](/Users/mortenstensgaard/git/iconsole/VERSION) (for example `1.0`)
+  2. Commit and push
+  3. Create and push tag `v1.0`
+  4. GitHub Action publishes draft release asset `iConsole-FTMS-macOS-v1.0.zip`
 
 ## Fair calibration guidance
 
@@ -267,6 +310,10 @@ Configuration is done with environment variables before `./iconsole_ftms`.
 - `ICONSOLE_WEB_PORT`  
   Port for local web dashboard.  
   Default: `8080`
+
+- `ICONSOLE_APP_VERSION`  
+  Version string shown in web UI title (normally injected by app launcher/CI build).  
+  Default: value from `VERSION` file (or `dev` if not found)
 
 - `ICONSOLE_RECONNECT_SECONDS`  
   Seconds between reconnect attempts when bike/RFCOMM is unavailable.  

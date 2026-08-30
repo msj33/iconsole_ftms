@@ -1,0 +1,49 @@
+name: Release macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag version
+        id: vars
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate VERSION matches tag
+        run: |
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          test -n "$FILE_VERSION"
+          if [[ "$FILE_VERSION" != "${{ steps.vars.outputs.tag_version }}" ]]; then
+            echo "VERSION file ($FILE_VERSION) must match tag version (${{ steps.vars.outputs.tag_version }})"
+            exit 1
+          fi
+
+      - name: Build macOS app
+        run: |
+          chmod +x ./build_macos_app.sh
+          ./build_macos_app.sh "${{ steps.vars.outputs.tag_version }}"
+
+      - name: Package release zip
+        run: |
+          cd dist
+          ZIP_NAME="iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "iConsole FTMS.app" "$ZIP_NAME"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: dist/${{ env.ZIP_NAME }}

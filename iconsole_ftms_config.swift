@@ -62,6 +62,22 @@ let READ: [UInt8] = [
 
 // Set ICONSOLE_VERBOSE=1 to enable detailed bridge diagnostics.
 let verboseLogging = ProcessInfo.processInfo.environment["ICONSOLE_VERBOSE"] == "1"
+let appVersion = {
+    if let raw = ProcessInfo.processInfo.environment["ICONSOLE_APP_VERSION"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+       !raw.isEmpty {
+        return raw
+    }
+
+    if let versionText = try? String(contentsOfFile: "VERSION", encoding: .utf8) {
+        let normalized = versionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalized.isEmpty {
+            return normalized
+        }
+    }
+
+    return "dev"
+}()
 let minResistanceLevel = 1
 let maxResistanceLevel = 30
 let startupResistanceLevel = {

@@ -1,0 +1,30 @@
+name: CI Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate version file
+        run: |
+          test -f VERSION
+          VERSION_VALUE="$(tr -d '[:space:]' < VERSION)"
+          test -n "$VERSION_VALUE"
+
+      - name: Build macOS app
+        run: |
+          chmod +x ./build_macos_app.sh
+          ./build_macos_app.sh
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iconsole-ftms-app
+          path: dist/iConsole FTMS.app
