@@ -35,15 +35,47 @@ jobs:
           chmod +x ./build_macos_app.sh
           ./build_macos_app.sh "${{ steps.vars.outputs.tag_version }}"
 
-      - name: Package release zip
+      - name: Package release dmg
         run: |
-          cd dist
-          ZIP_NAME="iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.zip"
-          ditto -c -k --sequesterRsrc --keepParent "iConsole FTMS.app" "$ZIP_NAME"
-          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          DMG_NAME="iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg"
+          hdiutil create \
+            -volname "iConsole FTMS" \
+            -srcfolder "dist/iConsole FTMS.app" \
+            -ov -format UDZO \
+            "dist/$DMG_NAME"
+          echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
+
+      - name: Build release notes
+        run: |
+          cat > dist/RELEASE_NOTES.md <<EOF
+          ## iConsole FTMS v${{ steps.vars.outputs.tag_version }}
+
+          ### Download
+          - **iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg**
+
+          ### Installation
+          1. Download the DMG asset.
+          2. Open the DMG.
+          3. Drag **iConsole FTMS.app** to **Applications**.
+          4. Start the app from Applications.
+
+          ### Notes
+          - Native macOS app bundle with built-in web interface.
+          - App version is visible in the UI header.
+          - This release is published as a draft for manual review.
+          EOF
+
+      - name: Remove legacy zip asset (if present)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete-asset "v${{ steps.vars.outputs.tag_version }}" \
+            "iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.zip" \
+            --yes || true
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: dist/${{ env.ZIP_NAME }}
+          body_path: dist/RELEASE_NOTES.md
+          files: dist/${{ env.DMG_NAME }}
