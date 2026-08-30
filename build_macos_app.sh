@@ -16,6 +16,7 @@ ICON_MASTER_PNG="$BUILD_DIR/AppIcon-1024.png"
 ICONSET_DIR="$BUILD_DIR/AppIcon.iconset"
 ICON_ICNS="$RESOURCES_DIR/AppIcon.icns"
 VERSION_FILE="$ROOT_DIR/VERSION"
+SIGN_IDENTITY="${ICONSOLE_SIGN_IDENTITY:--}"
 
 if [[ $# -gt 1 ]]; then
   echo "Usage: $0 [version]"
@@ -108,7 +109,13 @@ PLIST
 chmod +x "$LAUNCHER_BIN" "$BRIDGE_BIN"
 
 echo "Signing app bundle..."
-codesign --force --deep --sign - --timestamp=none "$APP_DIR"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  codesign --force --deep --sign - --timestamp=none "$APP_DIR"
+else
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$BRIDGE_BIN"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$LAUNCHER_BIN"
+  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+fi
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 echo
