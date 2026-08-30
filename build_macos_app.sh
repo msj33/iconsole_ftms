@@ -107,6 +107,10 @@ PLIST
 
 chmod +x "$LAUNCHER_BIN" "$BRIDGE_BIN"
 
+echo "Signing app bundle..."
+codesign --force --deep --sign - --timestamp=none "$APP_DIR"
+codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+
 echo
 echo "Done:"
 echo "  $APP_DIR"
