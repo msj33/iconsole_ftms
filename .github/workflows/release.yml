@@ -53,16 +53,16 @@ jobs:
 
       - name: Build release notes
         run: |
-          cat > dist/RELEASE_NOTES.md <<EOF
+          cat > dist/RELEASE_NOTES.md <<'EOF'
           ## iConsole FTMS v${{ steps.vars.outputs.tag_version }}
 
           ### Features
-          - Native macOS app (`iConsole FTMS.app`) with Dock/taskbar integration.
+          - Native macOS app (iConsole FTMS.app) with Dock/taskbar integration.
           - Bluetooth bridge from iConsole bike data to FTMS/Cycling Power for MyWhoosh.
           - Full-screen responsive web dashboard embedded in the app.
           - Connect-first device picker with one-tap bike selection.
           - Simple/Advanced riding modes.
-          - Manual resistance `+/-` control and auto-base resistance control.
+          - Manual resistance +/- control and auto-base resistance control.
           - Automatic reconnect when bike connection is lost.
           - Home-network access tip with detected local IP.
           - Built-in custom app icon and app version display in UI.
