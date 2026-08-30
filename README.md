@@ -11,11 +11,20 @@ Native macOS app that bridges selected iConsole bikes to MyWhoosh via FTMS.
 4. Drag **iConsole FTMS.app** to **Applications**
 5. Start **iConsole FTMS** from Applications
 
-If macOS blocks first launch:
+### If macOS 26 blocks launch ("Apple could not verify...")
 
-1. Open the DMG again
-2. Run **Install iConsole FTMS.command** (included in DMG)
-3. Start **iConsole FTMS** from Applications
+Run this once in Terminal:
+
+```bash
+# adjust version/path if needed
+xattr -dr com.apple.quarantine "$HOME/Downloads/iConsole-FTMS-macOS-v1.0.dmg"
+hdiutil attach "$HOME/Downloads/iConsole-FTMS-macOS-v1.0.dmg"
+cp -R "/Volumes/iConsole FTMS/iConsole FTMS.app" "/Applications/"
+xattr -dr com.apple.quarantine "/Applications/iConsole FTMS.app"
+open "/Applications/iConsole FTMS.app"
+```
+
+If mounted volume is named `iConsole FTMS 2`, use that path in the `cp` command.
 
 ## Web frontend
 
