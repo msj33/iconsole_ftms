@@ -214,12 +214,12 @@ While `iconsole_ftms` is running, use the web dashboard:
 
 - App version is stored in [VERSION](/Users/mortenstensgaard/git/iconsole/VERSION).
 - GitHub Actions CI builds the app on pushes/PRs: [ci-build.yml](/Users/mortenstensgaard/git/iconsole/.github/workflows/ci-build.yml).
-- Tagged releases (`v*`) build a **DMG** and publish a **draft** GitHub Release with release notes: [release.yml](/Users/mortenstensgaard/git/iconsole/.github/workflows/release.yml).
+- Tagged releases (`v*`) build a **DMG** and publish a **public** GitHub Release with release notes: [release.yml](/Users/mortenstensgaard/git/iconsole/.github/workflows/release.yml).
 - Release flow:
   1. Update [VERSION](/Users/mortenstensgaard/git/iconsole/VERSION) (for example `1.0`)
   2. Commit and push
   3. Create and push tag `v1.0`
-  4. GitHub Action publishes draft release asset `iConsole-FTMS-macOS-v1.0.dmg` + clear release notes
+  4. GitHub Action publishes release asset `iConsole-FTMS-macOS-v1.0.dmg` + clear release notes
 
 ## Fair calibration guidance
 
