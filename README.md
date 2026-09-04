@@ -36,6 +36,11 @@ If mounted volume is named `iConsole FTMS 2`, use that path in the `cp` command.
 
 ![iConsole FTMS dashboard screen](docs/images/web-frontend-dashboard-v1.0.png)
 
+### Keep iPad awake
+
+- The web UI includes a **Keep awake** toggle (connection screen + dashboard).
+- On supported browsers (Safari/iPadOS with Screen Wake Lock support), turn it on to prevent auto sleep while riding.
+
 ## What the app includes
 
 - Native macOS app window (Dock/taskbar app)
@@ -43,6 +48,7 @@ If mounted volume is named `iConsole FTMS 2`, use that path in the `cp` command.
 - Connect-first bike selection screen
 - Simple mode and Advanced mode UI
 - Full-screen responsive dashboard layout
+- Keep-awake toggle for iPad/tablet sessions
 - Manual resistance `+/-` buttons
 - Auto-base resistance controls for hill feel
 - Automatic reconnect when bike is unavailable
