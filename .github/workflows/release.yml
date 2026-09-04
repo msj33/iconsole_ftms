@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve tag version
         id: vars
@@ -72,19 +74,25 @@ jobs:
 
       - name: Build release notes
         run: |
-          cat > dist/RELEASE_NOTES.md <<'EOF'
+          CURRENT_TAG="v${{ steps.vars.outputs.tag_version }}"
+          PREVIOUS_TAG="$(git tag --list 'v*' --sort=-version:refname | grep -Fxv "$CURRENT_TAG" | head -n 1 || true)"
+          COMMIT_RANGE="${CURRENT_TAG}"
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            COMMIT_RANGE="${PREVIOUS_TAG}..${CURRENT_TAG}"
+          fi
+
+          COMMITS="$(git log --no-merges --pretty='- %s (%h)' ${COMMIT_RANGE} | cat)"
+          if [[ -z "$COMMITS" ]]; then
+            COMMITS="- No code changes found."
+          fi
+
+          cat > dist/RELEASE_NOTES.md <<EOF
           ## iConsole FTMS v${{ steps.vars.outputs.tag_version }}
 
-          ### Features
-          - Native macOS app (iConsole FTMS.app) with Dock/taskbar integration.
-          - Bluetooth bridge from iConsole bike data to FTMS/Cycling Power for MyWhoosh.
-          - Full-screen responsive web dashboard embedded in the app.
-          - Connect-first device picker with one-tap bike selection.
-          - Simple/Advanced riding modes.
-          - Manual resistance +/- control and auto-base resistance control.
-          - Automatic reconnect when bike connection is lost.
-          - Home-network access tip with detected local IP.
-          - Built-in custom app icon and app version display in UI.
+          ### Changes since last release
+          EOF
+          printf "%s\n" "$COMMITS" >> dist/RELEASE_NOTES.md
+          cat >> dist/RELEASE_NOTES.md <<EOF
 
           ### Install
           - Download **iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg**
