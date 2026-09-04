@@ -58,25 +58,6 @@ jobs:
           rm -rf "$DMG_ROOT"
           mkdir -p "$DMG_ROOT"
           cp -R "dist/iConsole FTMS.app" "$DMG_ROOT/"
-          cat > "$DMG_ROOT/Install iConsole FTMS.command" <<'EOF'
-          #!/bin/bash
-          set -euo pipefail
-          SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-          SRC_APP="$SRC_DIR/iConsole FTMS.app"
-          DEST_APP="/Applications/iConsole FTMS.app"
-
-          if [[ ! -d "$SRC_APP" ]]; then
-            echo "Could not find iConsole FTMS.app next to this installer script."
-            exit 1
-          fi
-
-          rm -rf "$DEST_APP"
-          cp -R "$SRC_APP" "/Applications/"
-          xattr -dr com.apple.quarantine "$DEST_APP" || true
-          open "$DEST_APP"
-          echo "Installed to /Applications and launched."
-          EOF
-          chmod +x "$DMG_ROOT/Install iConsole FTMS.command"
           ln -s /Applications "$DMG_ROOT/Applications"
           hdiutil create \
             -volname "iConsole FTMS" \
@@ -112,8 +93,17 @@ jobs:
           - Download **iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg**
           - Open the DMG
           - Drag **iConsole FTMS.app** to **Applications**
-          - If macOS blocks first launch: in Applications, right-click **iConsole FTMS.app** → **Open** → **Open**
-          - Start the app from **Applications**
+          - Before first launch, choose one of these options:
+            1. System Settings → Privacy & Security → **Open Anyway**
+            2. Run in Terminal:
+               ```bash
+               xattr -dr com.apple.quarantine "$HOME/Downloads/iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg"
+               hdiutil attach "$HOME/Downloads/iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg"
+               cp -R "/Volumes/iConsole FTMS/iConsole FTMS.app" "/Applications/"
+               xattr -dr com.apple.quarantine "/Applications/iConsole FTMS.app"
+               open "/Applications/iConsole FTMS.app"
+               ```
+          - Start **iConsole FTMS** from **Applications**
           EOF
 
       - name: Remove legacy zip asset (if present)
