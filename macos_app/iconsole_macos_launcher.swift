@@ -139,6 +139,9 @@ final class IconsoleMacOSLauncher: NSObject, NSApplicationDelegate, WKNavigation
         var processEnv = ProcessInfo.processInfo.environment
         processEnv["ICONSOLE_APP_VERSION"] = resolveAppVersion()
         for (key, value) in env {
+            if key == "ICONSOLE_APP_VERSION" {
+                continue
+            }
             processEnv[key] = value
         }
         process.environment = processEnv

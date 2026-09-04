@@ -37,6 +37,20 @@ jobs:
           chmod +x ./build_macos_app.sh
           ./build_macos_app.sh "${{ steps.vars.outputs.tag_version }}"
 
+      - name: Validate built app version
+        run: |
+          APP_PATH="dist/iConsole FTMS.app"
+          PLIST_VERSION="$(defaults read "$APP_PATH/Contents/Info" CFBundleShortVersionString)"
+          RESOURCE_VERSION="$(tr -d '[:space:]' < "$APP_PATH/Contents/Resources/APP_VERSION")"
+          if [[ "$PLIST_VERSION" != "${{ steps.vars.outputs.tag_version }}" ]]; then
+            echo "Built app Info.plist version ($PLIST_VERSION) does not match tag version (${{ steps.vars.outputs.tag_version }})"
+            exit 1
+          fi
+          if [[ "$RESOURCE_VERSION" != "${{ steps.vars.outputs.tag_version }}" ]]; then
+            echo "Built app APP_VERSION ($RESOURCE_VERSION) does not match tag version (${{ steps.vars.outputs.tag_version }})"
+            exit 1
+          fi
+
       - name: Package release dmg
         run: |
           DMG_NAME="iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg"
@@ -98,7 +112,7 @@ jobs:
           - Download **iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg**
           - Open the DMG
           - Drag **iConsole FTMS.app** to **Applications**
-          - If macOS blocks launch, run **Install iConsole FTMS.command** from the DMG once
+          - If macOS blocks first launch: in Applications, right-click **iConsole FTMS.app** → **Open** → **Open**
           - Start the app from **Applications**
           EOF
 

@@ -291,7 +291,7 @@ final class WebControlServer {
             .connect-screen {
               height: 100%;
               display: grid;
-              grid-template-rows: auto auto auto auto 1fr;
+              grid-template-rows: auto auto auto 1fr;
               gap: 14px;
             }
             .connect-title { font-size: 54px; font-weight: 800; }
@@ -300,11 +300,6 @@ final class WebControlServer {
               font-size: 17px;
               color: #8ea6d8;
               margin-top: -6px;
-            }
-            .connect-actions {
-              display: flex;
-              gap: 10px;
-              align-items: center;
             }
             .version-chip {
               display: inline-block;
@@ -493,9 +488,6 @@ final class WebControlServer {
               <div class="connect-title">Connect your bike <span class="version-chip" id="connectVersion">v-</span></div>
                 <div class="connect-sub" id="connectStatus">Choose your bike to continue.</div>
               <div class="connect-tip" id="connectTip">Tip: Other devices can open this interface in a browser via http://192.x.x.x:8080 (use your Mac's local IP).</div>
-                <div class="connect-actions">
-                  <button id="keepAwakeToggleConnect" onclick="toggleKeepAwake()">Keep awake: Off</button>
-                </div>
                 <div id="deviceList" class="device-list"></div>
                 <div id="connectOverlay" class="connect-overlay hidden">
                   <div class="connect-popup">
@@ -514,7 +506,6 @@ final class WebControlServer {
                   </div>
                   <div class="top-actions">
                     <button id="modeToggle" onclick="toggleMode()">Mode: Simple</button>
-                    <button id="keepAwakeToggleDash" onclick="toggleKeepAwake()">Keep awake: Off</button>
                     <div class="status" id="status">Connected</div>
                   </div>
                 </div>
@@ -546,7 +537,6 @@ final class WebControlServer {
           </div>
           <script>
             let uiMode = localStorage.getItem('iconsole-ui-mode') || 'simple';
-            let keepAwakeEnabled = localStorage.getItem('iconsole-keep-awake') !== 'off';
             let wakeLockSentinel = null;
             const connectFlow = {
               pending: false,
@@ -558,20 +548,15 @@ final class WebControlServer {
             function wakeLockSupported() {
               return typeof navigator !== 'undefined' && 'wakeLock' in navigator;
             }
-            function updateKeepAwakeButtons() {
-              const supported = wakeLockSupported();
-              const statusText = supported
-                ? (keepAwakeEnabled ? (wakeLockSentinel ? 'Keep awake: On' : 'Keep awake: Pending') : 'Keep awake: Off')
-                : 'Keep awake: Not supported';
-              const connectBtn = document.getElementById('keepAwakeToggleConnect');
-              const dashBtn = document.getElementById('keepAwakeToggleDash');
-              if (connectBtn) {
-                connectBtn.textContent = statusText;
-                connectBtn.disabled = !supported;
-              }
-              if (dashBtn) {
-                dashBtn.textContent = statusText;
-                dashBtn.disabled = !supported;
+            function shouldKeepAwakeNow() {
+              const dashboard = document.getElementById('dashboardScreen');
+              return dashboard && !dashboard.classList.contains('hidden') && document.visibilityState === 'visible';
+            }
+            async function syncWakeLock() {
+              if (shouldKeepAwakeNow()) {
+                await requestWakeLock();
+              } else {
+                await releaseWakeLock();
               }
             }
             async function releaseWakeLock() {
@@ -582,39 +567,24 @@ final class WebControlServer {
                 await wakeLockSentinel.release();
               } catch (error) {
                 console.warn('Wake lock release failed', error);
-              } finally {
-                wakeLockSentinel = null;
-                updateKeepAwakeButtons();
               }
+              wakeLockSentinel = null;
             }
             async function requestWakeLock() {
-              if (!keepAwakeEnabled || !wakeLockSupported() || document.visibilityState !== 'visible' || wakeLockSentinel) {
+              if (!wakeLockSupported() || wakeLockSentinel || !shouldKeepAwakeNow()) {
                 return;
               }
               try {
                 wakeLockSentinel = await navigator.wakeLock.request('screen');
                 wakeLockSentinel.addEventListener('release', () => {
                   wakeLockSentinel = null;
-                  updateKeepAwakeButtons();
-                  if (keepAwakeEnabled && document.visibilityState === 'visible') {
-                    requestWakeLock();
+                  if (shouldKeepAwakeNow()) {
+                    syncWakeLock();
                   }
                 });
               } catch (error) {
                 console.warn('Wake lock request failed', error);
-              } finally {
-                updateKeepAwakeButtons();
               }
-            }
-            async function toggleKeepAwake() {
-              keepAwakeEnabled = !keepAwakeEnabled;
-              localStorage.setItem('iconsole-keep-awake', keepAwakeEnabled ? 'on' : 'off');
-              if (!keepAwakeEnabled) {
-                await releaseWakeLock();
-              } else {
-                await requestWakeLock();
-              }
-              updateKeepAwakeButtons();
             }
             function fitLayout() {
               const viewport = document.getElementById('viewport');
@@ -777,6 +747,7 @@ final class WebControlServer {
                   hideConnectOverlay();
                 }
                 fitLayout();
+                syncWakeLock();
                 return;
               }
 
@@ -813,28 +784,22 @@ final class WebControlServer {
               document.getElementById('status').textContent = s.status;
               applyMode();
               fitLayout();
+              syncWakeLock();
             }
             document.addEventListener('keydown', (e) => {
               if (e.key === 'ArrowUp') { e.preventDefault(); sendAction('base_up'); }
               if (e.key === 'ArrowDown') { e.preventDefault(); sendAction('base_down'); }
             });
             document.addEventListener('visibilitychange', () => {
-              if (document.visibilityState === 'visible') {
-                requestWakeLock();
-              } else {
-                releaseWakeLock();
-              }
+              syncWakeLock();
             });
             document.addEventListener('pointerdown', () => {
-              if (keepAwakeEnabled && !wakeLockSentinel) {
-                requestWakeLock();
-              }
+              syncWakeLock();
             }, { passive: true });
             window.addEventListener('resize', fitLayout);
             applyMode();
             fitLayout();
-            updateKeepAwakeButtons();
-            requestWakeLock();
+            syncWakeLock();
             setInterval(refresh, 500);
             refresh();
           </script>

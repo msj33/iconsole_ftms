@@ -15,11 +15,12 @@ Native macOS app that bridges selected iConsole bikes to MyWhoosh via FTMS.
 
 If macOS blocks launch:
 
-1. Open the DMG again
-2. Run **Install iConsole FTMS.command** (included in DMG)
-3. Start **iConsole FTMS** from Applications
+1. Drag **iConsole FTMS.app** to **Applications**
+2. In Applications, right-click **iConsole FTMS.app** and choose **Open**
+3. Confirm **Open** once
+4. Start **iConsole FTMS** normally from Applications after that
 
-If `.command` is also blocked, run this once in Terminal:
+If you prefer Terminal install (or if `.command` is blocked), run this once:
 
 ```bash
 # adjust version/path if needed
@@ -44,8 +45,9 @@ If mounted volume is named `iConsole FTMS 2`, use that path in the `cp` command.
 
 ### Keep iPad awake
 
-- The web UI includes a **Keep awake** toggle (connection screen + dashboard).
-- On supported browsers (Safari/iPadOS with Screen Wake Lock support), turn it on to prevent auto sleep while riding.
+- Keep-awake is automatic on the dashboard (no button).
+- When the remote dashboard is active in Safari/Chrome and the page is visible, the app requests screen wake lock.
+- Browser restrictions may require a tap on the page before wake lock is granted.
 
 ## What the app includes
 
@@ -54,7 +56,7 @@ If mounted volume is named `iConsole FTMS 2`, use that path in the `cp` command.
 - Connect-first bike selection screen
 - Simple mode and Advanced mode UI
 - Full-screen responsive dashboard layout
-- Keep-awake toggle for iPad/tablet sessions
+- Automatic keep-awake on dashboard for iPad/tablet sessions
 - Manual resistance `+/-` buttons
 - Auto-base resistance controls for hill feel
 - Automatic reconnect when bike is unavailable
