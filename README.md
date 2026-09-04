@@ -13,12 +13,13 @@ Native macOS app that bridges selected iConsole bikes to MyWhoosh via FTMS.
 
 ### If macOS 26 blocks launch ("Apple could not verify...")
 
-Run this once in Terminal:
+This can happen with older, non-notarized builds. New tagged releases are signed + notarized.
+For older builds, run this once in Terminal:
 
 ```bash
 # adjust version/path if needed
-xattr -dr com.apple.quarantine "$HOME/Downloads/iConsole-FTMS-macOS-v1.0.dmg"
-hdiutil attach "$HOME/Downloads/iConsole-FTMS-macOS-v1.0.dmg"
+xattr -dr com.apple.quarantine "$HOME/Downloads/iConsole-FTMS-macOS-vX.Y.dmg"
+hdiutil attach "$HOME/Downloads/iConsole-FTMS-macOS-vX.Y.dmg"
 cp -R "/Volumes/iConsole FTMS/iConsole FTMS.app" "/Applications/"
 xattr -dr com.apple.quarantine "/Applications/iConsole FTMS.app"
 open "/Applications/iConsole FTMS.app"
