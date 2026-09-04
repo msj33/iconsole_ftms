@@ -253,7 +253,7 @@ final class WebControlServer {
         <html lang="en">
         <head>
           <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
           <title>iConsole FTMS</title>
           <style>
             :root {
@@ -274,6 +274,7 @@ final class WebControlServer {
               background: radial-gradient(130% 140% at 20% 0%, #18294d 0%, var(--bg) 45%, #050913 100%);
               color: var(--text);
               font-family: "Inter", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+              touch-action: manipulation;
             }
             #viewport { width: 100vw; height: 100dvh; position: relative; overflow: hidden; }
             .app {
@@ -404,6 +405,7 @@ final class WebControlServer {
               font-weight: 700;
               min-height: 78px;
               min-width: 120px;
+              touch-action: manipulation;
             }
             button:hover { border-color: var(--accent); }
             .danger { border-color: #7f2c3b; background: #3d1d29; color: #ffd7de; }

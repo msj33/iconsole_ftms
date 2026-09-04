@@ -48,6 +48,7 @@ If mounted volume is named `iConsole FTMS 2`, use that path in the `cp` command.
 - Keep-awake is automatic on the dashboard (no button).
 - When the remote dashboard is active in Safari/Chrome and the page is visible, the app requests screen wake lock.
 - Browser restrictions may require a tap on the page before wake lock is granted.
+- Double-tap zoom is disabled on the web control UI to avoid accidental zoom while riding.
 
 ## What the app includes
 
@@ -57,6 +58,7 @@ If mounted volume is named `iConsole FTMS 2`, use that path in the `cp` command.
 - Simple mode and Advanced mode UI
 - Full-screen responsive dashboard layout
 - Automatic keep-awake on dashboard for iPad/tablet sessions
+- Double-tap zoom disabled for touch controls
 - Manual resistance `+/-` buttons
 - Auto-base resistance controls for hill feel
 - Automatic reconnect when bike is unavailable
