@@ -17,41 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate Apple notarization secrets
-        run: |
-          test -n "${{ secrets.APPLE_ID }}"
-          test -n "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}"
-          test -n "${{ secrets.APPLE_TEAM_ID }}"
-          test -n "${{ secrets.APPLE_DEVELOPER_ID_APP_CERT_BASE64 }}"
-          test -n "${{ secrets.APPLE_DEVELOPER_ID_APP_CERT_PASSWORD }}"
-
       - name: Resolve tag version
         id: vars
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Import Developer ID certificate
-        env:
-          CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APP_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APP_CERT_PASSWORD }}
-        run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
-          CERT_PATH="$RUNNER_TEMP/developer_id_app.p12"
-          echo "$CERT_BASE64" | base64 --decode > "$CERT_PATH"
-          security create-keychain -p "actions" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "actions" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-          security default-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "actions" "$KEYCHAIN_PATH"
-          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*\"\\(Developer ID Application:.*\\)\".*/\\1/p' | head -n 1)"
-          if [[ -z "$IDENTITY" ]]; then
-            echo "No Developer ID Application identity found in keychain"
-            exit 1
-          fi
-          echo "ICONSOLE_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
       - name: Validate VERSION matches tag
         run: |
@@ -65,7 +35,7 @@ jobs:
       - name: Build macOS app
         run: |
           chmod +x ./build_macos_app.sh
-          ICONSOLE_SIGN_IDENTITY="${ICONSOLE_SIGN_IDENTITY}" ./build_macos_app.sh "${{ steps.vars.outputs.tag_version }}"
+          ./build_macos_app.sh "${{ steps.vars.outputs.tag_version }}"
 
       - name: Package release dmg
         run: |
@@ -74,19 +44,31 @@ jobs:
           rm -rf "$DMG_ROOT"
           mkdir -p "$DMG_ROOT"
           cp -R "dist/iConsole FTMS.app" "$DMG_ROOT/"
+          cat > "$DMG_ROOT/Install iConsole FTMS.command" <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+          SRC_APP="$SRC_DIR/iConsole FTMS.app"
+          DEST_APP="/Applications/iConsole FTMS.app"
+
+          if [[ ! -d "$SRC_APP" ]]; then
+            echo "Could not find iConsole FTMS.app next to this installer script."
+            exit 1
+          fi
+
+          rm -rf "$DEST_APP"
+          cp -R "$SRC_APP" "/Applications/"
+          xattr -dr com.apple.quarantine "$DEST_APP" || true
+          open "$DEST_APP"
+          echo "Installed to /Applications and launched."
+          EOF
+          chmod +x "$DMG_ROOT/Install iConsole FTMS.command"
           ln -s /Applications "$DMG_ROOT/Applications"
           hdiutil create \
             -volname "iConsole FTMS" \
             -srcfolder "$DMG_ROOT" \
             -ov -format UDZO \
             "dist/$DMG_NAME"
-          codesign --force --timestamp --sign "${ICONSOLE_SIGN_IDENTITY}" "dist/$DMG_NAME"
-          xcrun notarytool submit "dist/$DMG_NAME" \
-            --apple-id "${{ secrets.APPLE_ID }}" \
-            --password "${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}" \
-            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
-            --wait
-          xcrun stapler staple "dist/$DMG_NAME"
           rm -rf "$DMG_ROOT"
           echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
 
@@ -116,10 +98,8 @@ jobs:
           - Download **iConsole-FTMS-macOS-v${{ steps.vars.outputs.tag_version }}.dmg**
           - Open the DMG
           - Drag **iConsole FTMS.app** to **Applications**
+          - If macOS blocks launch, run **Install iConsole FTMS.command** from the DMG once
           - Start the app from **Applications**
-
-          ### Security
-          - Release DMG is signed with Developer ID and notarized by Apple.
           EOF
 
       - name: Remove legacy zip asset (if present)
