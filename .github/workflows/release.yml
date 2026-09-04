@@ -40,7 +40,7 @@ jobs:
       - name: Validate built app version
         run: |
           APP_PATH="dist/iConsole FTMS.app"
-          PLIST_VERSION="$(defaults read "$APP_PATH/Contents/Info" CFBundleShortVersionString)"
+          PLIST_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist")"
           RESOURCE_VERSION="$(tr -d '[:space:]' < "$APP_PATH/Contents/Resources/APP_VERSION")"
           if [[ "$PLIST_VERSION" != "${{ steps.vars.outputs.tag_version }}" ]]; then
             echo "Built app Info.plist version ($PLIST_VERSION) does not match tag version (${{ steps.vars.outputs.tag_version }})"
